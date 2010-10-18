@@ -2,7 +2,12 @@ Build.PL
 Changes
 MANIFEST
 README
+Range.xs
 lib/Net/IP/Range.pm
 t/00-load.t
 t/pod-coverage.t
 t/pod.t
+t/boilerplate.t
+src/range.c
+src/range.h
+
