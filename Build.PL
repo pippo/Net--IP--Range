@@ -8,7 +8,8 @@ my $builder = Module::Build->new(
     dist_author         => q{Evgeniy Kosov <evgeniy@kosov.su>},
     dist_version_from   => 'lib/Net/IP/Range.pm',
     build_requires => {
-        'Test::More' => 0,
+        'Test::More'      => 0,
+        'Test::Exception' => 0,
     },
     c_source            => './src',
     xs_files            => { 'Range.xs' => './Range.xs' },
