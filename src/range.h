@@ -123,4 +123,12 @@ void
 range_iterator_destroy(range_iterator_t *it);
 
 
+/*******************************************
+ * Macros
+ ******************************************/
+
+#define GUESS_AF(x) (strchr(x, ':') ? AF_INET6 : AF_INET)
+
+
+
 #endif // defined __RANGE_H

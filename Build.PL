@@ -11,10 +11,10 @@ my $builder = Module::Build->new(
         'Test::More'      => 0,
         'Test::Exception' => 0,
     },
-    c_source            => './src',
-    xs_files            => { 'Range.xs' => './Range.xs' },
-    add_to_cleanup      => [ 'Net-IP-Range-*' ],
-    create_makefile_pl => 'traditional',
+    c_source             => './src',
+    add_to_cleanup       => [ 'Net-IP-Range-*' ],
+    create_makefile_pl   => 'traditional',
+    #extra_compiler_flags => '-DDEBUG',
 );
 
 $builder->create_build_script();

@@ -21,37 +21,53 @@ Net::IP::Range - IP network/range routines
 
     use Net::IP::Range;
 
-    my $range = Net::IP::Range->new( cidr => '192.168.10.0/24' );
+    # Initialization
+
+    $range = Net::IP::Range->new( cidr => '192.168.10.0/24' );
     # or ...
     $range = Net::IP::Range->new( cidr => 'dead:beaf:aa:bb::/64' );
+    # or ...
+    $range = Net::IP::Range->new( network => '127.0.0.0', netmask => '255.0.0.0' );
 
-    # and then something like ...
 
-    $range->occupy( $ip1, 'host1' );
-    $range->occupy( $ip2 => 'host2', $ip3 => 'host3' );
-
-    # and perhaps later ...
-
-    $range->free($ip2);
+    # Range info
 
     print "Max addr: ", $range->max_addr;
     print "Min addr: ", $range->min_addr;
     print "Range size: ", $range->size;
+    print "Free address number: ", $range->free_addrs;
 
 
-    my $it = $range->iterator(ITER_FREE);
+    # Free address management
+
+    # 1. populate range
+
+    while( ($ip, $hostname) = each %ips_from_a_storage ) {
+        $range->occupy( $ip, $hostname );
+    }
+
+    # .. and perhaps later ...
+
+    $range->free($some_ip);
+
+    # 2. inspect free/busy addresses if needed
+
+    $it = $range->iterator_free;
     print "Free addresses:\n";
-    while ( my $subrange = $it->next ) {
-        print
-            "\t", $subrange->[0],
-            ($subrange->[1] ? "-" . $subrange->[1] : ''), "\n";
+    while ( $subrange = $it->next ) {
+        # $subrange is another Net::IP::Range instance
+        print "\t", $subrange->min_addr, "-" , $subrange->max_addr, "\n";
     }
 
-    $it = $range->iterator(ITER_OCCUPIED);
+    $it = $range->iterator_occupied;
     print "Occupied addresses:\n";
-    while ( my $addr = $it->next ) {
-        print "\t $addr->[0]  - $addr->[1]\n";
+    while ( my ($ip, $host) = $it->next ) {
+        # $ip is Net::IP::Range::Item instance
+        print "\t $ip - $host\n";
     }
+
+    # 3. allocate one free IP
+    $ip = $range->allocate_ip( $hostname );
 
 =head1 DESCRIPTION
 
@@ -108,7 +124,6 @@ under the terms of either: the GNU General Public License as published
 by the Free Software Foundation; or the Artistic License.
 
 See http://dev.perl.org/licenses/ for more information.
-
 
 =cut
 

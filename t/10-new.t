@@ -3,9 +3,7 @@
 use Test::More tests => 9;
 use Test::Exception;
 
-BEGIN {
-    use_ok( 'Net::IP::Range' ) or die;
-}
+use Net::IP::Range;
 
 
 my $range;
@@ -16,14 +14,14 @@ lives_ok {
 
 ok( $range, 'new(): cidr v6, instantiates' );
 is(
-    $range && unpack('H*', $range->first),
+    $range && $range->min_addr->unpacked,
     "00010002000300040000000000000000",
-    'new(): cidr v6, first is ok'
+    'new(): cidr v6, min_addr is ok'
 );
 is(
-    $range && unpack('H*', $range->last),
+    $range && $range->max_addr->unpacked,
     "0001000200030004ffffffffffffffff",
-    'new(): cidr v6, last is ok '
+    'new(): cidr v6, max_addr is ok '
 );
 
 
@@ -35,17 +33,16 @@ lives_ok {
 
 ok( $range, 'new(): cidr v4, instantiates' );
 is(
-    $range && unpack('H*', $range->first),
+    $range && $range->min_addr->unpacked,
     "c0a80a00",
-    'new(): cidr v4, first is ok'
+    'new(): cidr v4, min_addr is ok'
 );
 is(
-    $range && unpack('H*', $range->last),
+    $range && $range->max_addr->unpacked,
     "c0a80aff",
-    'new(): cidr v4, last is ok '
+    'new(): cidr v4, max_addr is ok '
 );
 
 throws_ok {
     $range = Net::IP::Range->new( cidr => '192.168.10.1/24' )
-    } 'new(): cidr v4, bad cidr fails';
-
+    } qr/bad range/, 'new(): cidr v4, bad cidr fails';

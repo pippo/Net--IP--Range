@@ -8,10 +8,10 @@
 
 
 static void
-_init_first_range(range_t *map);
+_init_first_range(range_t *r);
 
 static int
-_split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
+_split_range(range_t *r, range_item_range_t *ir, range_item_t *prev,
                ip_addr *ip, const char *host);
 
 static int
@@ -31,7 +31,7 @@ _dump_address(FILE *stream, ip_addr *ip, size_t addr_len);
  */
  
 int
-range_init_from_ip(range_t *map, int family, ip_addr *first, ip_addr *last)
+range_init_from_ip(range_t *r, int family, ip_addr *first, ip_addr *last)
 {
     size_t addr_len = ( family == AF_INET ?
                         sizeof(struct in_addr) :
@@ -41,12 +41,12 @@ range_init_from_ip(range_t *map, int family, ip_addr *first, ip_addr *last)
         return ERR_BAD_RANGE;
     }
 
-    map->family   = family;
-    map->addr_len = addr_len;
-    memcpy(&map->first, first, addr_len);
-    memcpy(&map->last,  last, addr_len);
+    r->family   = family;
+    r->addr_len = addr_len;
+    memcpy(&r->first, first, addr_len);
+    memcpy(&r->last,  last, addr_len);
 
-    _init_first_range(map);
+    _init_first_range(r);
 
     return ERR_OK;
 }
@@ -60,35 +60,35 @@ range_init_from_ip(range_t *map, int family, ip_addr *first, ip_addr *last)
  */
 
 int
-range_init_from_str(range_t *map, const char *first, const char *last)
+range_init_from_str(range_t *r, const char *first, const char *last)
 {
     int af_first, af_last;
 
-    af_first = (strchr(first, ':')) ? AF_INET6 : AF_INET;
-    af_last  = (strchr(last, ':')) ? AF_INET6 : AF_INET;
+    af_first = GUESS_AF(first);
+    af_last  = GUESS_AF(last);
 
     if (af_first != af_last) {
         return ERR_MIXED_RANGE;
     }
  
-    map->family = af_first;
-    map->addr_len = (map->family == AF_INET ?
+    r->family = af_first;
+    r->addr_len = (r->family == AF_INET ?
                      sizeof(struct in_addr) :
                       sizeof(struct in6_addr) );
 
-    if ( !inet_pton(af_first, first, &map->first) ) {
+    if ( !inet_pton(af_first, first, &r->first) ) {
         return ERR_UNPARSABLE_ADDR;
     }
 
-    if ( !inet_pton(af_last, last, &map->last) ) {
+    if ( !inet_pton(af_last, last, &r->last) ) {
         return ERR_UNPARSABLE_ADDR;
     }
 
-    if ( memcmp(first, last, map->addr_len) > 0 ) {
+    if ( memcmp(first, last, r->addr_len) > 0 ) {
         return ERR_BAD_RANGE;
     }
 
-    _init_first_range(map);
+    _init_first_range(r);
 
     return ERR_OK;
 }
@@ -100,39 +100,52 @@ range_init_from_str(range_t *map, const char *first, const char *last)
  */
 
 int
-range_init_from_cidr(range_t *map, const char *cidr)
+range_init_from_cidr(range_t *r, const char *cidr)
 {
-    int af, offset;
-    size_t bits;
+    int af, offset, bits;
+    char *bitstr;
     unsigned char *p, bt;
 
-    af = (strchr(cidr, ':')) ? AF_INET6 : AF_INET;
+    af = GUESS_AF(cidr);
 
-    map->family = af;
-    map->addr_len = (af == AF_INET ?
+    r->family = af;
+    r->addr_len = (af == AF_INET ?
                      sizeof(struct in_addr) :
                      sizeof(struct in6_addr) );
 
-    bits = inet_net_pton(af, cidr, &map->first, map->addr_len);
-    if (bits == -1) {
+    if ( !(bitstr = strchr(cidr, '/')) ) {
+        return ERR_UNPARSABLE_CIDR;
+    }
+    *bitstr++ = '\x0';
+
+    if ( !inet_pton(af, cidr, &r->first) ) {
         return ERR_UNPARSABLE_CIDR;
     }
 
-    p = (unsigned char*)&map->last;
-    memcpy(p, &map->first, map->addr_len);
+    bits = (int) strtol(bitstr, (char **) NULL, 10);
+
+    p = (unsigned char*)&r->last;
+    memcpy(p, &r->first, r->addr_len);
 
     offset = (int)(bits / 8);
     bits = bits % 8;
 
     bt = 0xff;
     bt >>= bits;
+
+    if (p[offset] & bt) {
+        return ERR_UNPARSABLE_CIDR;
+    }
+
     p[offset] |= bt;
 
-    while(++offset < map->addr_len) {
+    while(++offset < r->addr_len) {
+        if (p[offset])
+            return ERR_UNPARSABLE_CIDR;
         p[offset] = 0xff;
     }
 
-    _init_first_range(map);
+    _init_first_range(r);
 
     return ERR_OK;
 }
@@ -140,17 +153,17 @@ range_init_from_cidr(range_t *map, const char *cidr)
 
 /*
  * Func: range_destroy()
- * Desc: Frees memory, allocated by a range map's internals
+ * Desc: Frees memory, allocated by a range r's internals
  */
 
 void
-range_destroy(range_t *map)
+range_destroy(range_t *r)
 {
     range_item_t *pitem, *pnext;
 
-    if (map->items) {
-        pitem = map->items->next;
-        free(map->items);
+    if (r->items) {
+        pitem = r->items->next;
+        free(r->items);
 
         while (pitem) {
             pnext = pitem->next;
@@ -170,31 +183,30 @@ range_destroy(range_t *map)
  */
 
 int
-range_occupy_ip(range_t *map, ip_addr *ip, const char *host)
+range_occupy_ip(range_t *r, ip_addr *ip, const char *host)
 {
     range_item_t       *pi, *pprev = NULL;
     range_item_range_t *pir;
 
-    if (!map || !map->items)
+    if (!r || !r->items)
         return ERR_UNINITIALIZED;
-    if ( memcmp(&map->first, ip, map->addr_len)  > 0 )
+    if ( memcmp(&r->first, ip, r->addr_len)  > 0 )
         return ERR_NOT_IN_RANGE;
-    if ( memcmp(&map->last, ip, map->addr_len)  < 0 )
+    if ( memcmp(&r->last, ip, r->addr_len)  < 0 )
         return ERR_NOT_IN_RANGE;
 
-    pi = map->items;
+    pi = r->items;
     while (pi) {
         if (pi->status == STATUS_FREE) {
             pir = (range_item_range_t*)pi;
-            if ( memcmp(&pir->last, ip, map->addr_len) >= 0 ) {
-                if ( memcmp(&pir->first, ip, map->addr_len) <= 0 ) {
-                    return _split_range(map, pir, pprev, ip, host);
+            if ( memcmp(&pir->last, ip, r->addr_len) >= 0 ) {
+                if ( memcmp(&pir->first, ip, r->addr_len) <= 0 ) {
+                    return _split_range(r, pir, pprev, ip, host);
                 }
                 else {
                     return ERR_OCCUPIED;
                 }
             }
-
         }
 
         pprev = pi;
@@ -211,47 +223,47 @@ range_occupy_ip(range_t *map, ip_addr *ip, const char *host)
  */
 
 int
-range_free_ip(range_t *map, ip_addr *ip)
+range_free_ip(range_t *r, ip_addr *ip)
 {
     range_item_t       *pi, *pprev = NULL;
     range_item_range_t *new;
 
-    if (!map || !map->items)
+    if (!r || !r->items)
         return ERR_UNINITIALIZED;
-    if ( memcmp(&map->first, ip, map->addr_len)  > 0 )
+    if ( memcmp(&r->first, ip, r->addr_len)  > 0 )
         return ERR_NOT_IN_RANGE;
-    if ( memcmp(&map->last, ip, map->addr_len)  < 0 )
+    if ( memcmp(&r->last, ip, r->addr_len)  < 0 )
         return ERR_NOT_IN_RANGE;
 
-    pi = map->items;
+    pi = r->items;
     while (pi) {
         if (pi->status == STATUS_FREE) {
             if ( memcmp(&((range_item_range_t*)pi)->last,
-                        ip, map->addr_len) >= 0 ) {
+                        ip, r->addr_len) >= 0 ) {
                 return ERR_NOT_FOUND;
             }
 
         }
         else {
-            if ( !memcmp(&((range_item_ip_t*)pi)->ip, ip, map->addr_len) ) {
+            if ( !memcmp(&((range_item_ip_t*)pi)->ip, ip, r->addr_len) ) {
 
                 if (pprev && pprev->status == STATUS_FREE) {
                     _inc_address(&((range_item_range_t*)pprev)->last,
-                                 map->addr_len);
+                                 r->addr_len);
                     pprev->next = pi->next;
                 }
                 else if (pi->next &&
                          ((range_item_t*)pi->next)->status == STATUS_FREE) {
                     _dec_address(&((range_item_range_t*)pi->next)->first,
-                                 map->addr_len);
+                                 r->addr_len);
                     pprev->next = pi->next;
                 }
                 else {
                     new = (range_item_range_t*) malloc(sizeof *new);
                     new->status = STATUS_FREE;
                     new->next   = pi->next;
-                    memcpy(&new->first, ip, map->addr_len);
-                    memcpy(&new->last, ip, map->addr_len);
+                    memcpy(&new->first, ip, r->addr_len);
+                    memcpy(&new->last, ip, r->addr_len);
 
                     pprev->next = new;
                 }
@@ -273,28 +285,28 @@ range_free_ip(range_t *map, ip_addr *ip)
 
 /*
  * Func: range_lookup_ip()
- * Desc: Looks up an IP in the map.
+ * Desc: Checks an IP allocation status.
  */
 
 int
-range_lookup_ip(range_t *map, ip_addr *ip, range_item_ip_t **res)
+range_lookup_ip(range_t *r, ip_addr *ip, range_item_ip_t **res)
 {
     range_item_t       *pi;
     range_item_range_t *pir;
     range_item_ip_t    *pip;
 
-    if (!map || !map->items)
+    if (!r || !r->items)
         return ERR_UNINITIALIZED;
-    if ( memcmp(&map->first, ip, map->addr_len)  > 0 )
+    if ( memcmp(&r->first, ip, r->addr_len)  > 0 )
         return ERR_NOT_IN_RANGE;
-    if ( memcmp(&map->last, ip, map->addr_len)  < 0 )
+    if ( memcmp(&r->last, ip, r->addr_len)  < 0 )
         return ERR_NOT_IN_RANGE;
 
-    pi = map->items;
+    pi = r->items;
     while (pi) {
         if (pi->status == STATUS_FREE) {
             pir = (range_item_range_t*)pi;
-            if ( memcmp(&pir->last, ip, map->addr_len) >= 0 ) {
+            if ( memcmp(&pir->last, ip, r->addr_len) >= 0 ) {
                     *res = NULL;
                     return ERR_OK;
             }
@@ -302,7 +314,7 @@ range_lookup_ip(range_t *map, ip_addr *ip, range_item_ip_t **res)
         }
         else {
             pip = (range_item_ip_t*)pi;
-            if ( !memcmp(&pip->ip, ip, map->addr_len) ) {
+            if ( !memcmp(&pip->ip, ip, r->addr_len) ) {
                 *res = pip;
                 return ERR_OK;
             }
@@ -323,38 +335,38 @@ range_lookup_ip(range_t *map, ip_addr *ip, range_item_ip_t **res)
  */
 
 void
-range_dump(range_t *map)
+range_dump(range_t *r)
 {
     range_item_t *item;
 
     fprintf(stderr, "DBG: range is: ");
-    if (map) {
-        fprintf(stderr, "{\nDBG:\tfamily => %i\n", map->family);
+    if (r) {
+        fprintf(stderr, "{\nDBG:\tfamily => %i\n", r->family);
 
         fprintf(stderr, "DBG:\tfirst  => ");
-        _dump_address(stderr, &map->first, map->addr_len);
+        _dump_address(stderr, &r->first, r->addr_len);
 
         fprintf(stderr, "\nDBG:\tlast   => ");
-        _dump_address(stderr, &map->last, map->addr_len);
+        _dump_address(stderr, &r->last, r->addr_len);
 
         fprintf(stderr, "\nDBG:\titems  => [");
-        if (map->items) {
-            item = map->items;
+        if (r->items) {
+            item = r->items;
             while (item) {
                 fprintf(stderr, "\nDBG:\t\t%p: {\n", (void*)item);
                 if (item->status == STATUS_FREE) {
                     fprintf(stderr, "DBG:\t\t\tfirst => ");
                     _dump_address(stderr,&((range_item_range_t*)item)->first,
-                                  map->addr_len);
+                                  r->addr_len);
 
                     fprintf(stderr, "\nDBG:\t\t\tlast  => ");
                     _dump_address(stderr,&((range_item_range_t*)item)->last,
-                                  map->addr_len);
+                                  r->addr_len);
                 }
                 else {
                     fprintf(stderr, "DBG:\t\t\tip   => ");
                     _dump_address(stderr,&((range_item_ip_t*)item)->ip,
-                                  map->addr_len);
+                                  r->addr_len);
                     fprintf(stderr, "\nDBG:\t\t\thost   => %s",
                             ((range_item_ip_t*)item)->host);
                 }
@@ -380,13 +392,13 @@ range_dump(range_t *map)
  */
 
 range_iterator_t*
-range_free_addrs_iterator(range_t *map)
+range_free_addrs_iterator(range_t *r)
 {
     range_iterator_t *it = (range_iterator_t*) malloc(sizeof *it);
 
-    it->family = map->family;
+    it->family = r->family;
     it->type = ITERATOR_FREE;
-    it->next = map->items;
+    it->next = r->items;
 
     return it;
 }
@@ -398,13 +410,13 @@ range_free_addrs_iterator(range_t *map)
  */
 
 range_iterator_t*
-range_occupied_addrs_iterator(range_t *map)
+range_occupied_addrs_iterator(range_t *r)
 {
     range_iterator_t *it = (range_iterator_t*) malloc(sizeof *it);
 
-    it->family = map->family;
+    it->family = r->family;
     it->type   = ITERATOR_OCCUPIED;
-    it->next   = map->items;
+    it->next   = r->items;
 
     return it;
 }
@@ -447,25 +459,25 @@ range_iterator_destroy(range_iterator_t *it)
  */
 
 static void
-_init_first_range(range_t *map)
+_init_first_range(range_t *r)
 {
-    range_item_range_t *r;
-    size_t addr_len = map->addr_len ?
-                          map->addr_len :
+    range_item_range_t *ir;
+    size_t addr_len = r->addr_len ?
+                          r->addr_len :
                           sizeof(ip_addr);
 
-    r = (range_item_range_t*) malloc(sizeof *r);
-    r->next   = NULL;
-    r->status = STATUS_FREE;
-    memcpy(&r->first, &map->first, addr_len);
-    memcpy(&r->last, &map->last, addr_len);
+    ir = (range_item_range_t*) malloc(sizeof *ir);
+    ir->next   = NULL;
+    ir->status = STATUS_FREE;
+    memcpy(&ir->first, &r->first, addr_len);
+    memcpy(&ir->last, &r->last, addr_len);
 
-    map->items = (range_item_t*)r;
+    r->items = (range_item_t*)ir;
 }
 
 
 static int
-_split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
+_split_range(range_t *r, range_item_range_t *ir, range_item_t *prev,
                ip_addr *ip, const char *host)
 {
     range_item_ip_t    *new;
@@ -475,7 +487,7 @@ _split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
     new = (range_item_ip_t*) malloc(sizeof *new);
     new->status = STATUS_OCCUPIED;
     new->host   = strndup(host, (size_t)255);
-    memcpy(&new->ip, ip, map->addr_len);
+    memcpy(&new->ip, ip, r->addr_len);
 
     /*
      * NB: We assume here that an IP is within this range
@@ -483,16 +495,16 @@ _split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
      */
 
     /* if it's the first address in the range ... */
-    if ( !memcmp(&ir->first, ip, map->addr_len) ) {
+    if ( !memcmp(&ir->first, ip, r->addr_len) ) {
 
         /* see if that was the last free ip in this range */
-        if ( !memcmp(&ir->first, &ir->last, map->addr_len) ) {
+        if ( !memcmp(&ir->first, &ir->last, r->addr_len) ) {
             new->next  = ir->next;
             free(ir);
         }
         else {
             new->next   = (range_item_t*)ir;
-            _inc_address(&ir->first, map->addr_len);
+            _inc_address(&ir->first, r->addr_len);
         }
 
         /* insert new ip right before this range */
@@ -500,17 +512,17 @@ _split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
             prev->next = (range_item_t*)new;
         }
         else {
-            map->items = (range_item_t*)new;
+            r->items = (range_item_t*)new;
         }
 
         return ERR_OK;
     }
 
     /* if it's the last address in the range ... */
-    else if ( !memcmp(&ir->last, ip, map->addr_len) ) {
+    else if ( !memcmp(&ir->last, ip, r->addr_len) ) {
         new->next = ir->next;
         ir->next = (range_item_t*)new;
-        _dec_address(&ir->last, map->addr_len);
+        _dec_address(&ir->last, r->addr_len);
         return ERR_OK;
     }
 
@@ -520,19 +532,19 @@ _split_range(range_t *map, range_item_range_t *ir, range_item_t *prev,
         new_range = (range_item_range_t*) malloc(sizeof *new_range);
         new_range->status = STATUS_FREE;
         new_range->next   = ir->next;
-        memcpy(&new_range->first, ip, map->addr_len);
-        memcpy(&new_range->last, &ir->last, map->addr_len);
+        memcpy(&new_range->first, ip, r->addr_len);
+        memcpy(&new_range->last, &ir->last, r->addr_len);
 
         /* cut this range at the ip */
-        memcpy(&ir->last, ip, map->addr_len);
+        memcpy(&ir->last, ip, r->addr_len);
 
         /* insert new ip and range right after the current one */
         new->next = (range_item_t*)new_range;
         ir->next  = (range_item_t*)new;
 
         /* exclude the ip from both ranges at left & right */
-        _dec_address(&ir->last, map->addr_len);
-        _inc_address(&new_range->first, map->addr_len);
+        _dec_address(&ir->last, r->addr_len);
+        _inc_address(&new_range->first, r->addr_len);
 
         return ERR_OK;
     }
@@ -554,6 +566,7 @@ _inc_address(ip_addr *ip, size_t addr_len)
         }
 
         *p = 0;
+        p--;
     }
 
     return i_ok ? ERR_OK : ERR_OVERFLOW;
@@ -574,6 +587,7 @@ _dec_address(ip_addr *ip, size_t addr_len)
         }
 
         *p = 255;
+        p--;
     }
 
     return i_ok ? ERR_OK : ERR_OVERFLOW;
