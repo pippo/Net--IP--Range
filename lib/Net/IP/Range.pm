@@ -40,8 +40,6 @@ Net::IP::Range - IP network/range routines
 
     # Free address management
 
-    # 1. populate range
-
     while( ($ip, $hostname) = each %ips_from_a_storage ) {
         $range->occupy( $ip, $hostname );
     }
@@ -50,32 +48,90 @@ Net::IP::Range - IP network/range routines
 
     $range->free($some_ip);
 
-    # 2. inspect free/busy addresses if needed
-
-    $it = $range->iterator_free;
-    print "Free addresses:\n";
-    while ( $subrange = $it->next ) {
-        # $subrange is another Net::IP::Range instance
-        print "\t", $subrange->min_addr, "-" , $subrange->max_addr, "\n";
-    }
-
-    $it = $range->iterator_occupied;
-    print "Occupied addresses:\n";
-    while ( my ($ip, $host) = $it->next ) {
-        # $ip is Net::IP::Range::Item instance
-        print "\t $ip - $host\n";
-    }
-
-    # 3. allocate one free IP
+    # allocate one free IP
     $ip = $range->allocate_ip( $hostname );
 
 =head1 DESCRIPTION
 
-TBD
+=head1 INTERFACE
+
+=head2 new
+
+Instantiates a range. 
+
+    my $range = Net::IP::Range->new(
+            cidr => '192.168.1.0/24'
+        );
+    my $range6 = Net::IP::Range->new(
+            cidr => 'dead:beaf:aa:bb::/64'
+        );
+
+=head2 min_addr
+
+Returns the range's minimum address as Net::IP::Range::Item instance.
+
+    my $addr = $range->min_addr;
+    print "Min. address is: ", $addr->unpacked;
+
+=head2 max_addr
+
+Returns the range's maximum address as Net::IP::Range::Item instance.
+
+    my $addr = $range->min_addr;
+    print "Max. address is: ", $addr->unpacked;
+
+=head2 size
+
+*** TO BE IMPLEMENTED ***
+
+=head2 free_addrs
+
+*** TO BE IMPLEMENTED ***
+
+=head2 occupy
+
+Marks specified IP address as occupied.
+
+    $range->occupy('192.168.1.1', 'gateway.example.com');
+
+=head2 free
+
+Frees previously occupied IP address.
+
+    $range->free('192.168.1.1');
+
+=head2 iterator_free
+
+Returns free address iterator.
+
+    my $iter = $range->iterator_free;
+    print "Free addresses:\n";
+    while ( my $subrange = $it->next ) {
+        # $subrange is another Net::IP::Range instance
+        print "\t", $subrange->min_addr, "-" , $subrange->max_addr, "\n";
+    }
+
+
+=head2 iterator_occupied
+
+Returns occupied address iterator.
+
+   $it = $range->iterator_occupied;
+   print "Occupied addresses:\n";
+   while ( my ($ip, $host) = $it->next ) {
+       # $ip is Net::IP::Range::Item instance
+       print $ip->unpacked, " - $host\n";
+   }
+
+=head2 allocate_ip
+
+Grabs first free IP and marks it occupied.
+
+    my $ip = $range->allocate_ip('something.expample.com');
 
 =head1 AUTHOR
 
-Evgeniy Kosov, C<< <evgeniy at kosov.su> >>
+Evgeniy Kosov, C<< <ekos at cpan.org> >>
 
 =head1 BUGS
 
